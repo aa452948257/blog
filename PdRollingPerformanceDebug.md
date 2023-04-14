@@ -14,14 +14,48 @@ use the `py-spy` package to visualize the time consumption of different modules 
 
 We use [Huge Stock Market Dataset](https://www.kaggle.com/datasets/borismarjanovic/price-volume-data-for-all-us-stocks-etfs) as test data, that record Historical daily prices and volumes of all U.S. stocks and ETFs.
 
+### All dataset
 ```
-start_time = time.time()
 return_matrix = pd.read_csv("../test_csv/returns.csv", index_col=0, parse_dates=True)
+start_time = time.time()
 roll = return_matrix.rolling(window=30).agg('corr')
 end_time = time.time()
 print("Execution time:", end_time - start_time)
 Execution time: 105.7209062576294
 ```
+### Half subset on axis=0
+```
+return_matrix = pd.read_csv("../test_csv/returns.csv", index_col=0, parse_dates=True)
+return_matrix = return_matrix.iloc[: len(return_matrix) // 2]
+start_time = time.time()
+roll = return_matrix.rolling(window=30).agg('corr')
+end_time = time.time()
+print("Execution time:", end_time - start_time)
+Execution time: 97.95154094696045
+```
+
+### Half subset on axis=1
+```
+return_matrix = pd.read_csv("../test_csv/returns.csv", index_col=0, parse_dates=True)
+return_matrix = return_matrix[return_matrix.columns[: 500]]
+start_time = time.time()
+roll = return_matrix.rolling(window=30).agg('corr')
+end_time = time.time()
+print("Execution time:", end_time - start_time)
+Execution time: 26.112659215927124
+```
+
+### Empty Dataset
+```
+return_matrix = pd.read_csv("../test_csv/returns.csv", index_col=0, parse_dates=True)
+return_matrix = return_matrix.drop(return_matrix.index)
+start_time = time.time()
+roll = return_matrix.rolling(window=30).agg('corr')
+end_time = time.time()
+print("Execution time:", end_time - start_time)
+Execution time: 89.09344792366028
+```
+From the four experiments above, using the entire dataset, half the dataset, the entire dataset (half the columns), and an empty dataset (all columns), it can be seen that computation time is dependent on the number of columns.
 
 We use the `py-spy` package to visualize the time consumption of different modules as follows:
 <img width="1315" alt="image" src="https://user-images.githubusercontent.com/43697216/231928955-2b92f769-9f67-4805-9ae0-a397335bc0ee.png">
