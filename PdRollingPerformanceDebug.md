@@ -5,6 +5,108 @@ In this article, we will explore performance testing and debugging of Pandas Rol
 The Rolling correlation function is a very powerful Pandas function that allows rolling correlation calculations to be performed on a DataFrame or Series. 
 However, we have found that the `DataFrame.rolling().agg('corr')` function is very slow when dealing with a large number of columns. 
 Even when performing rolling operations on a DataFrame with empty rows but non-empty columns, it can still take a significant amount of time.
+More details is shown in [Xorbits/issues](https://github.com/xprobe-inc/xorbits/issues/316).
 
 In this article, we analyze the impact of different input formats on the performance of `DataFrame.rolling(window=30).agg('corr')` and 
 use the `py-spy` package to visualize the time consumption of different modules through a heat map.
+
+## Performance Testing
+
+We use [Huge Stock Market Dataset](https://www.kaggle.com/datasets/borismarjanovic/price-volume-data-for-all-us-stocks-etfs) as test data, that record Historical daily prices and volumes of all U.S. stocks and ETFs.
+
+```
+start_time = time.time()
+return_matrix = pd.read_csv("../test_csv/returns.csv", index_col=0, parse_dates=True)
+roll = return_matrix.rolling(window=30).agg('corr')
+end_time = time.time()
+print("Execution time:", end_time - start_time)
+Execution time: 105.7209062576294
+```
+
+We use the `py-spy` package to visualize the time consumption of different modules as follows:
+<img width="1315" alt="image" src="https://user-images.githubusercontent.com/43697216/231928955-2b92f769-9f67-4805-9ae0-a397335bc0ee.png">
+
+The main execution time is concentrated in the following function:
+https://github.com/pandas-dev/pandas/blob/249d93e4abc59639983eb3e8fccac8382592d457/pandas/core/window/rolling.py#L557
+```
+def flex_binary_moment(arg1, arg2, f, pairwise=False):
+    ……
+    results = defaultdict(dict)
+    for i in range(len(arg1.columns)):
+        for j in range(len(arg2.columns)):
+            if j < i and arg2 is arg1:
+                # Symmetric case
+                results[i][j] = results[j][i]
+            else:
+                results[i][j] = f(
+                    *prep_binary(arg1.iloc[:, i], arg2.iloc[:, j])
+                )
+    ……
+```
+
+`flex_binary_moment` is used to calculate the rolling correlation between every two columns of Series. `results[i][j]` represents the rolling correlation between the i-th and j-th columns of Series. The two time-consuming parts of flex_binary_moment are `f()` (35.5%) and `prep_binary`(57.2%). `f()` calculates the rolling correlation, while `prep_binary` masks out rows with NaN values in the two columns of Series.
+
+Some people may wonder why the time taken to calculate the rolling correlation is shorter than that of prep_binary. Let's take a look at the code for the two parts below.
+
+### prep_binary
+```
+def prep_binary(arg1, arg2):
+    # mask out values, this also makes a common index...
+    X = arg1 + 0 * arg2
+    Y = arg2 + 0 * arg1
+
+    return X, Y
+```
+Here is the prep_binary function executing a flame graph, which shows that a significant amount of time is spent on calculating X and Y.
+<img width="1309" alt="image" src="https://user-images.githubusercontent.com/43697216/231970580-82314e73-6836-49ed-81ea-8645862bb39f.png">
+
+### rolling correlation
+```
+def corr_func(x, y):
+    x_array = self._prep_values(x)
+    y_array = self._prep_values(y)
+    window_indexer = self._get_window_indexer()
+    min_periods = (
+        self.min_periods
+        if self.min_periods is not None
+        else window_indexer.window_size
+    )
+    start, end = window_indexer.get_window_bounds(
+        num_values=len(x_array),
+        min_periods=min_periods,
+        center=self.center,
+        closed=self.closed,
+        step=self.step,
+    )
+    self._check_window_bounds(start, end, len(x_array))
+
+    with np.errstate(all="ignore"):
+        mean_x_y = window_aggregations.roll_mean(
+            x_array * y_array, start, end, min_periods
+        )
+        mean_x = window_aggregations.roll_mean(x_array, start, end, min_periods)
+        mean_y = window_aggregations.roll_mean(y_array, start, end, min_periods)
+        count_x_y = window_aggregations.roll_sum(
+            notna(x_array + y_array).astype(np.float64), start, end, 0
+        )
+        x_var = window_aggregations.roll_var(
+            x_array, start, end, min_periods, ddof
+        )
+        y_var = window_aggregations.roll_var(
+            y_array, start, end, min_periods, ddof
+        )
+        numerator = (mean_x_y - mean_x * mean_y) * (
+            count_x_y / (count_x_y - ddof)
+        )
+        denominator = (x_var * y_var) ** 0.5
+        result = numerator / denominator
+    return Series(result, index=x.index, name=x.name)
+```
+The key here is that Pandas convert x_array and y_array to numpy arrays for Cython routines.
+```
+x_array = self._prep_values(x)
+y_array = self._prep_values(y)
+```
+
+## Conclusion
+In this article, we discovered the performance issue with `DataFrame.rolling().agg('corr')` and used the `py-spy` module to generate a flame graph that visualizes the time consumption of different modules. We analyzed that the root cause of the performance issue was the index alignment operation of two arrays in the `prep_binary` function. We hope this blog can provide some help for developers who are dedicated to optimizing large-scale data computation with Pandas.
