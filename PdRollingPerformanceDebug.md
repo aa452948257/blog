@@ -158,5 +158,32 @@ x_array = _prep_values(x)
 y_array = _prep_values(y)
 ```
 
+## Solution
+We propose a simple optimization method from a parallel perspective, and as analyzed earlier, 
+reducing the columns significantly helps to reduce the computation time.
+Assuming the original DataFrame has a shape of (365, N) and a parallelism degree of m, 
+we can generate m Sub-DataFrames with a shape of (365, N/m). 
+The parallelism degree can be set to the number of cores of the processor. 
+To simplify, we ignore the communication time between different cores and broadcast the original DataFrame 
+to each core before the calculation.
+
+Without adding any parallel strategy, the number of computations is:
+
+```math
+C_1 = N^2
+```
+
+With any parallel strategy, since each core can operate simultaneously, the number of computations is:
+
+```math
+C_2 = (N/m)^2 + (N/m)^2 * (m - 1)
+```
+In C2, the first term is the required computation for the current Sub-DataFrame, and the second term is the required computation for the current Sub-DataFrame and other Sub-DataFrames. 
+As can be seen, the computation is reduced after parallelization.
+
 ## Conclusion
-In this article, we discovered the performance issue with `DataFrame.rolling().agg('corr')` and used the `py-spy` module to generate a flame graph that visualizes the time consumption of different modules. We analyzed that the root cause of the performance issue was the index alignment operation of two arrays in the `prep_binary` function. We hope this blog can provide some help for developers who are dedicated to optimizing large-scale data computation with Pandas.
+In this article, we discovered the performance issue with `DataFrame.rolling().agg('corr')` 
+and used the `py-spy` module to generate a flame graph that visualizes the time consumption of different modules. 
+We analyzed that the root cause of the performance issue was the index alignment operation of two arrays in the `prep_binary` function. 
+We also propose a simple optimization method from a parallel perspective.
+We hope this blog can provide some help for developers who are dedicated to optimizing large-scale data computation with Pandas.
